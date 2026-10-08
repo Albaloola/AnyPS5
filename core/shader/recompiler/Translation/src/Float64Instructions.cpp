@@ -39,6 +39,7 @@ void TranslationContext::writeF64Result(const RdnaOperand& operand, IrValue& val
     destination.omod = 0u;
     IrValue* result = &value;
     if (destination.clamp) {
+        if (!dx10Clamp()) throw std::runtime_error("clamp on an f64 result with DX10_CLAMP=0 is not implemented");
         result = &ir.Emit(IrOpcode::FPSaturate64, IrType::U64, {result});
     }
     writeOperand(destination, result);
