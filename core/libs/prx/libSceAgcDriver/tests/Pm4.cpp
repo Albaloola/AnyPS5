@@ -65,8 +65,8 @@ void testCatalog() {
     }
     check(values.size() == 55, "reference opcode catalog is incomplete");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
-    const std::array<std::pair<std::uint32_t, const char*>, 11> custom{{
-        {5, "DRAW_RESET"}, {6, "WAIT_FLIP_DONE"}, {9, "DISPATCH_RESET"}, {11, "PUSH_MARKER"},
+    const std::array<std::pair<std::uint32_t, const char*>, 12> custom{{
+        {5, "DRAW_RESET"}, {6, "WAIT_FLIP_DONE"}, {9, "DISPATCH_RESET"}, {10, "SET_MARKER"}, {11, "PUSH_MARKER"},
         {12, "POP_MARKER"}, {20, "ACQUIRE_MEM_CUSTOM"}, {21, "WRITE_DATA_CUSTOM"}, {23, "FLIP"},
         {24, "RELEASE_MEM_CUSTOM"}, {25, "DMA_DATA_CUSTOM"}, {26, "CONTEXT_STATE"}
     }};
@@ -158,12 +158,18 @@ void testContextAndBases() {
     execute(state, makePacket(0x2a, {1}));
     execute(state, makePacket(0x2f, {3}));
     check(state.indexBufferSize == 32 && state.indexBase == 0x100001000ull && state.indexType == 1 && state.instanceCount == 3, "draw setup state lost");
-    execute(state, makePacket(0x10, {0x00636261}, 0x2c));
-    check(state.markers.back() == "abc", "marker text lost");
+    execute(state, makePacket(0x10, {0x12345678, 0x00636261}, 0x2c));
+    check(state.markers.back().text == "abc" && state.markers.back().color == 0x12345678, "marker text or color lost");
+    execute(state, makePacket(0x10, {0xaabbccdd, 0x64636261}, 0x28));
+    check(state.lastSetMarker && state.lastSetMarker->text == "abcd" && state.lastSetMarker->color == 0xaabbccdd &&
+          state.markers.size() == 1 && state.markers.back().text == "abc", "bounded set marker changed stack");
+    execute(state, makePacket(0x10, {0x10}, 0x2c));
+    check(state.markers.size() == 2 && state.markers.back().text.empty() && state.markers.back().color == 0x10, "empty marker lost");
+    execute(state, makePacket(0x10, {0}, 0x30));
     execute(state, makePacket(0x10, {0}, 0x30));
     expectFailure([&] { execute(state, makePacket(0x10, {0}, 0x30)); }, "underflow");
     execute(state, makePacket(0x10, {0}, 0x24));
-    check(state.shader.empty() && state.context == AgcDriver::InitialContextRegisters() && state.dispatchIndirectBase == 0 && state.indexBase == 0 && !state.savedContext, "dispatch reset retained state");
+    check(state.shader.empty() && state.context == AgcDriver::InitialContextRegisters() && state.dispatchIndirectBase == 0 && state.indexBase == 0 && !state.savedContext && !state.lastSetMarker && state.markers.empty(), "dispatch reset retained state");
 }
 
 void testAutoDraw() {

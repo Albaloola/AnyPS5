@@ -64,8 +64,7 @@ std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t vide
 }
 
 uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {
-    (void)color;
-    return Agc::Marker::Push(buf, str, __func__);
+    return Agc::Marker::Push(buf, str, color, __func__);
 }
 
 uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
@@ -73,10 +72,15 @@ uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {
 }
 
 uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, uint32_t color) {
-    (void)color;
-    auto* packet = Agc::Marker::Push(buf, str, __func__);
-    Agc::Marker::Pop(buf, __func__);
-    return packet;
+    return Agc::Marker::Set(buf, str, color, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcAcbPushMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    return Agc::Marker::Write(buf, str, length, color, true, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    return Agc::Marker::Write(buf, str, length, color, false, __func__);
 }
 
 }

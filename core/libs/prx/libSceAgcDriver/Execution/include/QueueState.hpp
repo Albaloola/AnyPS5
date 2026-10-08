@@ -176,6 +176,11 @@ struct Predication {
     bool executeWhenSet = false;
 };
 
+struct DebugMarker {
+    std::string text;
+    std::uint32_t color;
+};
+
 struct QueueState {
     Registers shader;
     Registers context = InitialContextRegisters();
@@ -188,7 +193,8 @@ struct QueueState {
     std::uint32_t indexBufferSize = 0;
     std::uint32_t indexType = 0;
     std::uint32_t instanceCount = 1;
-    std::vector<std::string> markers;
+    std::vector<DebugMarker> markers;
+    std::optional<DebugMarker> lastSetMarker;
     Predication predication;
 
     void ClearContext() {

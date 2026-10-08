@@ -156,6 +156,7 @@ std::string Name(std::uint32_t header) {
             case 0x05: return "DRAW_RESET";
             case 0x06: return "WAIT_FLIP_DONE";
             case 0x09: return "DISPATCH_RESET";
+            case 0x0a: return "SET_MARKER";
             case 0x0b: return "PUSH_MARKER";
             case 0x0c: return "POP_MARKER";
             case 0x14: return "ACQUIRE_MEM_CUSTOM";
@@ -177,7 +178,7 @@ std::string_view UnsupportedReason(std::uint32_t header) {
     const auto opcode = (header >> 8u) & 0xffu;
     if (opcode == 0x10) {
         switch ((header >> 2u) & 0x3fu) {
-            case 0: case 0x06: case 0x09: case 0x0b: case 0x0c: case 0x17: case 0x1a: return {};
+            case 0: case 0x06: case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x17: case 0x1a: return {};
             case 0x14: case 0x18: return "guest cache actions and GPU release events are not implemented";
             default: return "custom packet has no implemented contract in the reference dispatch table";
         }
@@ -238,12 +239,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                 break;
             case 0x09: size(2); break;
             case 0x06: graphics(); size(4); require(packet[3] == 0, "unsupported rendering wait mode"); break;
-            case 0x0b: {
-                const auto data = std::as_bytes(packet.subspan(1));
-                require(std::find(data.begin(), data.end(), std::byte{}) != data.end(), "unterminated marker text");
-                break;
-            }
-            case 0x0c: break;
+            case 0x0a: case 0x0b: break;
+            case 0x0c: size(2); break;
             case 0x17: graphics(); size(6); break;
             case 0x1a:
                 graphics();
@@ -761,7 +758,14 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             switch ((packet[0] >> 2u) & 0x3fu) {
                 case 0: return;
                 case 0x09: queue = QueueState{}; return;
-                case 0x0b: queue.markers.emplace_back(reinterpret_cast<const char*>(packet.data() + 1)); return;
+                case 0x0a: case 0x0b: {
+                    const auto data = std::as_bytes(packet.subspan(2));
+                    const auto end = std::find(data.begin(), data.end(), std::byte{});
+                    DebugMarker marker{std::string(reinterpret_cast<const char*>(data.data()), static_cast<std::size_t>(end - data.begin())), packet[1]};
+                    if (((packet[0] >> 2u) & 0x3fu) == 0x0a) queue.lastSetMarker = std::move(marker);
+                    else queue.markers.push_back(std::move(marker));
+                    return;
+                }
                 case 0x0c:
                     require(!queue.markers.empty(), "marker stack underflow");
                     queue.markers.pop_back();
