@@ -282,6 +282,14 @@ void TranslationContext::rejectHalfOrDoubleOutputModifier(const RdnaOperand& ope
     }
 }
 
+IrU32 TranslationContext::quietNan32(IrU32 bits) {
+    return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x00400000u))) : bits;
+}
+
+IrU32 TranslationContext::quietNan16(IrU32 bits) {
+    return ieeeMode ? IrU32(ir.BitwiseOr(bits.Value(), ir.Constant(0x0200u))) : bits;
+}
+
 IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value) {
     if (operand.omod != 0u && outputModifierApplies(4u)) {
         IrValue& bits = ir.BitCastU32(value.Value());
@@ -299,7 +307,8 @@ IrF32 TranslationContext::applyF32ResultModifiers(const RdnaOperand& operand, Ir
         value = IrF32(ir.BitCastF32(*result));
     }
     if (operand.clamp) {
-        value = IrF32(ir.Emit(IrOpcode::FPSaturate32, IrType::F32, {&value.Value()}));
+        const IrF32 saturated(ir.Emit(IrOpcode::FPSaturate32, IrType::F32, {&value.Value()}));
+        value = dx10Clamp() ? saturated : selectF32(IrU1(ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {&value.Value()})), value, saturated);
     }
     return value;
 }
@@ -312,7 +321,8 @@ IrF32 TranslationContext::applyF16ResultModifiers(const RdnaOperand& operand, Ir
     const IrF32 zero(ir.ConstantF32(0.0f));
     const IrU1 positive(ir.Emit(IrOpcode::FPOrdGreaterThan32, IrType::U1, {&value.Value(), &zero.Value()}));
     const IrF32 limited(ir.Emit(IrOpcode::FPMin32, IrType::F32, {&value.Value(), &ir.ConstantF32(1.0f)}));
-    return selectF32(positive, limited, zero);
+    const IrF32 clamped = selectF32(positive, limited, zero);
+    return dx10Clamp() ? clamped : selectF32(IrU1(ir.Emit(IrOpcode::FPIsNan32, IrType::U1, {&value.Value()})), value, clamped);
 }
 
 IrU32 TranslationContext::clampF16Bits(const RdnaOperand& operand, IrU32 bits) {
@@ -323,7 +333,8 @@ IrU32 TranslationContext::clampF16Bits(const RdnaOperand& operand, IrU32 bits) {
     const IrU32 magnitude(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffu)));
     const IrU1 zero(ir.LogicalOr(ir.UGreaterThan(bits.Value(), ir.Constant(0x7fffu)), ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7c00u))));
     const IrU32 limited(ir.Select(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x3c00u)), ir.Constant(0x3c00u), bits.Value()));
-    return IrU32(ir.Select(zero.Value(), ir.Constant(0u), limited.Value()));
+    const IrU32 clamped(ir.Select(zero.Value(), ir.Constant(0u), limited.Value()));
+    return dx10Clamp() ? clamped : IrU32(ir.Select(ir.UGreaterThan(magnitude.Value(), ir.Constant(0x7c00u)), bits.Value(), clamped.Value()));
 }
 
 IrU32 TranslationContext::readScalarCode(std::uint32_t code) {
