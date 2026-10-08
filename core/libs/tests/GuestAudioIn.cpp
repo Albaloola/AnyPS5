@@ -7,6 +7,8 @@
 #include <fstream>
 #include <random>
 #include <string>
+#include <stdexcept>
+#include <algorithm>
 #include <vector>
 
 extern "C" {
@@ -44,29 +46,38 @@ void TestValidation() {
     Require(sceAudioInOpen(user, 0, 0, 256, 48000, 0) == invalidParam);
     Require(sceAudioInHqOpen(user, 2, 0, 128, 48000, 2) == invalidType);
     Require(sceAudioInHqOpen(user, 0, 0, 512, 48000, 2) == invalidSize);
+    for (const auto& unsupported : {std::vector<std::uint32_t>{256, 48000, 2}, {128, 16000, 2}, {128, 48000, 0x10}}) {
+        bool threw = false;
+        try { sceAudioInHqOpen(user, 0, 0, unsupported[0], unsupported[1], unsupported[2]); }
+        catch (const std::runtime_error&) { threw = true; }
+        Require(threw);
+    }
 }
 
-void TestCapture() {
+void TestCapture(bool highQuality) {
+    const std::size_t samples = highQuality ? 128 : 256;
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_capture-" + std::to_string(std::random_device{}()) + ".raw");
-    std::vector<std::int16_t> recorded(256 * 2 * 4);
-    for (std::size_t i = 0; i < recorded.size(); ++i) recorded[i] = static_cast<std::int16_t>(i * 7 - 3000);
+    std::vector<std::int16_t> recorded(samples * 2 * (highQuality ? 64 : 4));
+    for (std::size_t i = 0; i < recorded.size(); ++i) recorded[i] = static_cast<std::int16_t>((highQuality ? i % (samples * 2) : i) * 7 - 3000);
     std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(recorded.data()), static_cast<std::streamsize>(recorded.size() * 2));
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     SetEnvironment("SDL_DISKAUDIOFILEIN", path.string());
 
     TestValidation();
-    const int handle = sceAudioInOpen(user, 0, 0, 256, 48000, 2);
+    const int handle = highQuality ? sceAudioInHqOpen(user, 0, 0, samples, 48000, 2) : sceAudioInOpen(user, 0, 0, samples, 48000, 2);
     Require(handle > 0 && sceAudioInGetSilentState(handle) == 0);
-    std::vector<std::int16_t> block(256 * 2 + 1, 0x5555);
+    std::vector<std::int16_t> block(samples * 2 + 1, 0x5555);
     std::vector<std::int16_t> captured;
     for (int i = 0; i < 4; ++i) {
-        Require(sceAudioInInput(handle, block.data()) == 256);
+        Require(sceAudioInInput(handle, block.data()) == static_cast<int>(samples));
         captured.insert(captured.end(), block.begin(), block.end() - 1);
         Require(block.back() == 0x5555);
     }
-    Require(captured == recorded);
-    Require(sceAudioInInput(handle, block.data()) == 256);
-    for (std::size_t i = 0; i < 256 * 2; ++i) Require(block[i] == 0);
+    Require(std::equal(captured.begin(), captured.end(), recorded.begin()));
+    if (!highQuality) {
+        Require(sceAudioInInput(handle, block.data()) == static_cast<int>(samples));
+        for (std::size_t i = 0; i < samples * 2; ++i) Require(block[i] == 0);
+    }
     Require(sceAudioInClose(handle) == 0);
     std::filesystem::remove(path);
 }
@@ -75,6 +86,13 @@ void TestNoDevice() {
     constexpr int invalidHandle = static_cast<int>(0x80260101);
     constexpr int portFull = static_cast<int>(0x80260107);
     SetEnvironment("SDL_AUDIODRIVER", "none");
+    const int highQuality = sceAudioInHqOpen(user, 1, 0, 128, 48000, 0x11);
+    Require(highQuality > 0 && sceAudioInGetSilentState(highQuality) == 1);
+    std::vector<float> hqBuffer(129, 123.0f);
+    Require(sceAudioInInput(highQuality, hqBuffer.data()) == 128);
+    for (std::size_t index = 0; index < 128; ++index) Require(hqBuffer[index] == 0);
+    Require(hqBuffer.back() == 123.0f);
+    Require(sceAudioInClose(highQuality) == 0);
 
     TestValidation();
     const int handle = sceAudioInOpen(user, 0, 0, 256, 16000, 0x12);
@@ -101,6 +119,6 @@ void TestNoDevice() {
 
 int main(int argc, char** argv) {
     Require(argc == 2);
-    if (std::strcmp(argv[1], "capture") == 0) TestCapture();
+    if (std::strcmp(argv[1], "capture") == 0) { TestCapture(false); TestCapture(true); }
     else TestNoDevice();
 }
