@@ -88,6 +88,7 @@ struct Ngs2UserFx2 {
     std::vector<std::uint8_t> work;
     std::vector<std::uint8_t> state;
     std::uint32_t flags = 0;
+    bool initialized = false;
 };
 
 struct Ngs2Voice {
@@ -155,6 +156,27 @@ struct Ngs2System {
     std::vector<Ngs2Rack*> racks;
 };
 
+class Ngs2AllocatedBuffer {
+public:
+    Ngs2AllocatedBuffer(const Ngs2BufferAllocator& allocator, const Ngs2ContextBufferInfo& bufferInfo) noexcept
+        : allocator(allocator), bufferInfo(bufferInfo) {}
+    Ngs2AllocatedBuffer(const Ngs2AllocatedBuffer&) = delete;
+    Ngs2AllocatedBuffer& operator=(const Ngs2AllocatedBuffer&) = delete;
+    ~Ngs2AllocatedBuffer() {
+        if (!owned) return;
+        try {
+            allocator.free_handler(&bufferInfo);
+        } catch (...) {
+        }
+    }
+    void Release() noexcept { owned = false; }
+
+private:
+    Ngs2BufferAllocator allocator;
+    Ngs2ContextBufferInfo bufferInfo;
+    bool owned = true;
+};
+
 std::string Ngs2Hex(std::uint32_t value);
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block);
 std::recursive_mutex& Ngs2Mutex();
@@ -178,6 +200,7 @@ const float* Ngs2Atrac9Frame(Ngs2Voice& voice, Ngs2Block& block, std::uint32_t f
 void Ngs2CheckCustomRack(const Ngs2CustomRackOption& option);
 void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
+void Ngs2RollbackUserFx(Ngs2Rack& rack) noexcept;
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);

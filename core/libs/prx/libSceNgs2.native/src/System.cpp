@@ -104,12 +104,15 @@ static Ngs2SystemOption CheckedSystemOption(const Ngs2SystemOption* option) {
 static int CreateSystem(const Ngs2SystemOption& option, const Ngs2ContextBufferInfo& bufferInfo, const Ngs2BufferAllocator& allocator, Ngs2Handle* handle) {
     static std::uint32_t nextUid = 1;
     auto* system = new (Ngs2Place(&bufferInfo, sizeof(Ngs2System), alignof(Ngs2System))) Ngs2System{};
+    const auto cleanup = [](Ngs2System* value) { std::destroy_at(value); };
+    std::unique_ptr<Ngs2System, decltype(cleanup)> owner(system, cleanup);
     system->option = option;
     system->bufferInfo = bufferInfo;
     system->allocator = allocator;
     system->uid = nextUid++;
     Systems().push_back(system);
     *handle = reinterpret_cast<Ngs2Handle>(system);
+    owner.release();
     return SCE_NGS2_OK;
 }
 
@@ -136,9 +139,14 @@ int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2Cont
 int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     const auto checked = CheckedSystemOption(option);
-    const auto bufferInfo = Allocate(allocator, sizeof(Ngs2System));
+    if (allocator == nullptr) APS5_INVALID_ARG_EX;
+    const auto allocatorSnapshot = *allocator;
+    const auto bufferInfo = Allocate(&allocatorSnapshot, sizeof(Ngs2System));
+    Ngs2AllocatedBuffer bufferOwner(allocatorSnapshot, bufferInfo);
     std::lock_guard lock(Ngs2Mutex());
-    return CreateSystem(checked, bufferInfo, *allocator, handle);
+    const int result = CreateSystem(checked, bufferInfo, allocatorSnapshot, handle);
+    if (result == SCE_NGS2_OK) bufferOwner.Release();
+    return result;
 }
 
 int APS5_VABI sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {

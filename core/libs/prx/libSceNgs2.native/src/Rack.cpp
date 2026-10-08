@@ -95,7 +95,13 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     static std::uint32_t nextUid = 1;
     auto* system = Ngs2FindSystem(systemHandle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
+    const auto systemUid = system->uid;
     auto* rack = new (Ngs2Place(&bufferInfo, sizeof(Ngs2Rack), alignof(Ngs2Rack))) Ngs2Rack{};
+    const auto cleanup = [](Ngs2Rack* value) {
+        Ngs2RollbackUserFx(*value);
+        std::destroy_at(value);
+    };
+    std::unique_ptr<Ngs2Rack, decltype(cleanup)> owner(rack, cleanup);
     rack->system = system;
     rack->rackId = rackId;
     rack->maxChannels = RackMaxChannels(rackId, options);
@@ -116,8 +122,11 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
         voice.matrices.resize(options.common.max_matrices);
     }
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) Ngs2SetupUserFx(*rack, options.customSubmixer.custom_rack_option);
+    const auto* currentSystem = Ngs2FindSystem(systemHandle);
+    if (currentSystem != system || currentSystem->uid != systemUid) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     system->racks.push_back(rack);
     *handle = reinterpret_cast<Ngs2Handle>(rack);
+    owner.release();
     return SCE_NGS2_OK;
 }
 
@@ -162,14 +171,22 @@ int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t r
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     const auto options = CheckedRackOption(rack_id, option);
     if (allocator == nullptr || allocator->alloc_handler == nullptr || allocator->free_handler == nullptr) APS5_INVALID_ARG_EX;
+    const auto allocatorSnapshot = *allocator;
     std::lock_guard lock(Ngs2Mutex());
-    if (Ngs2FindSystem(system_handle) == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
+    const auto* system = Ngs2FindSystem(system_handle);
+    if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
+    const auto systemUid = system->uid;
     Ngs2ContextBufferInfo bufferInfo{};
     bufferInfo.host_buffer_size = sizeof(Ngs2Rack);
-    bufferInfo.user_data = allocator->user_data;
-    const int result = allocator->alloc_handler(&bufferInfo);
+    bufferInfo.user_data = allocatorSnapshot.user_data;
+    const int result = allocatorSnapshot.alloc_handler(&bufferInfo);
     if (result != SCE_NGS2_OK) throw std::runtime_error("NGS2: the allocator handler failed with " + std::to_string(result));
-    return CreateRack(system_handle, rack_id, options, bufferInfo, *allocator, handle);
+    Ngs2AllocatedBuffer bufferOwner(allocatorSnapshot, bufferInfo);
+    const auto* currentSystem = Ngs2FindSystem(system_handle);
+    if (currentSystem != system || currentSystem->uid != systemUid) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
+    const int createResult = CreateRack(system_handle, rack_id, options, bufferInfo, allocatorSnapshot, handle);
+    if (createResult == SCE_NGS2_OK) bufferOwner.Release();
+    return createResult;
 }
 
 int APS5_VABI sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {

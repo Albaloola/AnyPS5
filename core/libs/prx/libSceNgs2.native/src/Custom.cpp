@@ -47,10 +47,29 @@ void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option) {
             fx.work.resize(module.work_size);
             fx.state.resize(option.module[m].state_size);
             fx.flags = USER_FX2_FLAG_FIRST_PROCESS;
-            if (module.setup_handler == nullptr) continue;
-            auto context = UserFxContext(rack, m, i);
-            const int result = module.setup_handler(&context);
-            if (result != SCE_NGS2_OK) throw std::runtime_error("NGS2: the UserFx2 setup handler failed with " + std::to_string(result));
+            if (module.setup_handler != nullptr) {
+                auto context = UserFxContext(rack, m, i);
+                const int result = module.setup_handler(&context);
+                if (result != SCE_NGS2_OK) throw std::runtime_error("NGS2: the UserFx2 setup handler failed with " + std::to_string(result));
+            }
+            fx.initialized = true;
+        }
+    }
+}
+
+void Ngs2RollbackUserFx(Ngs2Rack& rack) noexcept {
+    for (std::size_t m = rack.userFx.size(); m-- > 0;) {
+        for (std::size_t i = rack.voices.size(); i-- > 0;) {
+            if (m >= rack.voices[i].userFx.size()) continue;
+            auto& fx = rack.voices[i].userFx[m];
+            if (!fx.initialized) continue;
+            fx.initialized = false;
+            if (rack.userFx[m].cleanup_handler == nullptr) continue;
+            auto context = UserFxContext(rack, m, static_cast<std::uint32_t>(i));
+            try {
+                rack.userFx[m].cleanup_handler(&context);
+            } catch (...) {
+            }
         }
     }
 }
