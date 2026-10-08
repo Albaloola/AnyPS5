@@ -20,6 +20,7 @@ int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo*, std::uint32_t, const void*
 int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo*, std::uint32_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*);
+int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo*, std::uint32_t, std::uint64_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*, std::size_t);
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*, std::size_t);
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo*, std::uint32_t, const void*, int, void*);
 int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t);
@@ -910,7 +911,38 @@ void TestResampleAt9(std::uint32_t context) {
 
 }
 
+static void TestSplitValidation() {
+    constexpr int invalidParameter = static_cast<int>(0x80930005);
+    std::vector<std::uint8_t> storage(256, 0xa5);
+    const auto untouched = storage;
+    AjmBatchInfo info{storage.data(), 16, storage.size()};
+    AjmBuffer buffer{};
+    for (const auto count : {std::size_t{0x1'0000'0000ull}, std::size_t{0x1'0000'0001ull}, std::size_t{256}, ~std::size_t{0}}) {
+        Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, count, nullptr, 0, nullptr, 0) == invalidParameter);
+        Require(info.offset == 16 && storage == untouched);
+        Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, &buffer, count, nullptr, 0) == invalidParameter);
+        Require(info.offset == 16 && storage == untouched);
+        Require(sceAjmBatchJobDecodeSplit(&info, 0, &buffer, count, nullptr, 0, nullptr) == invalidParameter);
+        Require(info.offset == 16 && storage == untouched);
+        Require(sceAjmBatchJobDecodeSplit(&info, 0, nullptr, 0, &buffer, count, nullptr) == invalidParameter);
+        Require(info.offset == 16 && storage == untouched);
+    }
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 1, &buffer, 1, nullptr, 0) == invalidParameter);
+    Require(info.offset == 16 && storage == untouched);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, &buffer, 1, nullptr, 1, nullptr, 0) == invalidParameter);
+    Require(info.offset == 16 && storage == untouched);
+    Require(sceAjmBatchJobDecodeSplit(&info, 0, nullptr, 1, &buffer, 1, nullptr) == invalidParameter);
+    Require(info.offset == 16 && storage == untouched);
+    Require(sceAjmBatchJobDecodeSplit(&info, 0, &buffer, 1, nullptr, 1, nullptr) == invalidParameter);
+    Require(info.offset == 16 && storage == untouched);
+    Require(sceAjmBatchJobRunSplit(&info, 0, 0, nullptr, 0, nullptr, 0, nullptr, 0) == 0);
+    Require(info.offset > 16);
+    Require(std::all_of(storage.begin(), storage.begin() + 16, [](auto byte) { return byte == 0xa5; }));
+    Require(std::all_of(storage.begin() + info.offset, storage.end(), [](auto byte) { return byte == 0xa5; }));
+}
+
 int main() {
+    TestSplitValidation();
     constexpr int invalidParameter = static_cast<int>(0x80930005);
     std::uint32_t context = 0;
     Require(sceAjmInitialize(0, nullptr) == invalidParameter);
