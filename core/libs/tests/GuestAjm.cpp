@@ -19,6 +19,7 @@ int APS5_VABI sceAjmBatchInitialize(void*, std::size_t, AjmBatchInfo*);
 int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobDecode(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobDecodeSingle(AjmBatchInfo*, std::uint32_t, const void*, std::size_t, void*, std::size_t, void*);
+int APS5_VABI sceAjmBatchJobDecodeSplit(AjmBatchInfo*, std::uint32_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*);
 int APS5_VABI sceAjmBatchJobRun(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*, std::size_t);
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo*, std::uint32_t, const void*, int, void*);
 int APS5_VABI sceAjmBatchJobControl(AjmBatchInfo*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t);
@@ -364,6 +365,37 @@ void TestDecodeSingle(std::uint32_t context) {
     Submit(context, info);
     Require(sideband.result == 0 && sideband.inputConsumed == 96 && sideband.outputWritten == 1152 * 2 && sideband.totalDecodedSamples == 1152);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestDecodeSplit(std::uint32_t context) {
+    std::uint32_t whole = 0;
+    std::uint32_t split = 0;
+    Require(sceAjmInstanceCreate(context, 0, 0, &whole) == 0 && sceAjmInstanceCreate(context, 0, 0, &split) == 0);
+    std::vector<std::uint8_t> batch(4096);
+    std::size_t offset = 0;
+    for (int frame = 0; frame < 6; ++frame) {
+        std::vector<std::int16_t> expected(1152);
+        DecodeSideband expectedSideband{};
+        RunDecode(context, whole, MP3_MONO + offset, sizeof(MP3_MONO) - offset, expected.data(), expected.size() * sizeof(std::int16_t), expectedSideband);
+        Require(expectedSideband.result == 0 && std::any_of(expected.begin(), expected.end(), [](std::int16_t sample) { return sample != 0; }));
+        constexpr std::size_t head = 37;
+        std::vector<std::int16_t> first(500);
+        std::vector<std::int16_t> second(652);
+        const AjmBuffer inputs[2] = {{const_cast<std::uint8_t*>(MP3_MONO + offset), head}, {const_cast<std::uint8_t*>(MP3_MONO + offset + head), sizeof(MP3_MONO) - offset - head}};
+        const AjmBuffer outputs[2] = {{first.data(), first.size() * sizeof(std::int16_t)}, {second.data(), second.size() * sizeof(std::int16_t)}};
+        AjmBatchInfo info{};
+        DecodeSideband sideband{};
+        Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+        Require(sceAjmBatchJobDecodeSplit(&info, split, inputs, 2, outputs, 2, &sideband) == 0);
+        Submit(context, info);
+        Require(sideband.result == 0 && sideband.inputConsumed == expectedSideband.inputConsumed && sideband.outputWritten == expectedSideband.outputWritten);
+        Require(sideband.totalDecodedSamples == expectedSideband.totalDecodedSamples);
+        first.insert(first.end(), second.begin(), second.end());
+        Require(first == expected);
+        offset += static_cast<std::size_t>(sideband.inputConsumed);
+    }
+    Require(offset == sizeof(MP3_MONO));
+    Require(sceAjmInstanceDestroy(context, whole) == 0 && sceAjmInstanceDestroy(context, split) == 0);
 }
 
 void TestGaplessDecode(std::uint32_t context) {
@@ -897,6 +929,7 @@ int main() {
     TestMp3(context);
     TestOpus(context);
     TestDecodeSingle(context);
+    TestDecodeSplit(context);
     TestGaplessDecode(context);
     TestCodecInfo(context);
     TestGetInfo(context);
