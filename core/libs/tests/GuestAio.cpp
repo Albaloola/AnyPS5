@@ -23,6 +23,7 @@ void APS5_VABI sceKernelAioInitializeParam(void* param);
 int APS5_VABI sceKernelAioSubmitReadCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
 int APS5_VABI sceKernelAioSubmitWriteCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
 int APS5_VABI sceKernelAioPollRequest(std::int32_t id, std::int32_t* state);
+int APS5_VABI sceKernelAioPollRequests(const std::int32_t* id, std::int32_t num, std::int32_t* state);
 int APS5_VABI sceKernelAioWaitRequest(std::int32_t id, std::int32_t* state, std::uint32_t* usec);
 int APS5_VABI sceKernelAioSubmitReadCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
 int APS5_VABI sceKernelAioSubmitWriteCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, std::int32_t* id);
@@ -113,6 +114,25 @@ int main() {
     std::int32_t writeStates[2] = {0, 0};
     Check(sceKernelAioWaitRequests(writeIds, 2, writeStates, 1, nullptr) == 0);
     Check(writeStates[0] == 3 && writeStates[1] == 4);
+    std::int32_t pollStates[3] = {-1, -1, 91};
+    Check(sceKernelAioPollRequests(writeIds, 2, pollStates) == 0);
+    Check(pollStates[0] == 3 && pollStates[1] == 4 && pollStates[2] == 91);
+    const std::int32_t repeatedIds[3] = {writeIds[1], writeIds[0], writeIds[1]};
+    Check(sceKernelAioPollRequests(repeatedIds, 3, pollStates) == 0);
+    Check(pollStates[0] == 4 && pollStates[1] == 3 && pollStates[2] == 4);
+    std::int32_t overlapping[3] = {writeIds[0], writeIds[1], 77};
+    Check(sceKernelAioPollRequests(overlapping, 2, overlapping + 1) == 0);
+    Check(overlapping[0] == writeIds[0] && overlapping[1] == 3 && overlapping[2] == 4);
+    std::array<std::int32_t, 128> maximumIds{};
+    std::array<std::int32_t, 129> maximumStates{};
+    maximumIds.fill(writeIds[0]);
+    maximumStates.fill(91);
+    Check(sceKernelAioPollRequests(maximumIds.data(), 128, maximumStates.data()) == 0);
+    for (std::size_t i = 0; i < maximumIds.size(); ++i) Check(maximumStates[i] == 3);
+    Check(maximumStates.back() == 91);
+    pollStates[0] = 77;
+    Check(sceKernelAioPollRequests(writeIds, 0, pollStates) == 0);
+    Check(pollStates[0] == 77);
     std::array<char, 4> readBack{};
     std::array<char, 4> tail{};
     KernelAioResult readBackResult{-1, 0};
@@ -137,6 +157,8 @@ int main() {
     Check(cancelled == 4);
     Check(sceKernelAioPollRequest(readIds[0], &polled) == 0);
     Check(polled == 4);
+    Check(sceKernelAioPollRequests(readIds, 2, pollStates) == 0);
+    Check(pollStates[0] == 4 && pollStates[1] == 3);
     Check(sceKernelAioCancelRequest(0, &cancelled) == 0);
     Check(cancelled == 2);
     std::int32_t cancelIds[2] = {0, readIds[1]};
@@ -154,6 +176,13 @@ int main() {
     Check(sceKernelClose(batchFd) == 0);
     std::int32_t badIds[2] = {readIds[0], 9999};
     std::int32_t untouched[2] = {7, 7};
+    Check(sceKernelAioPollRequests(nullptr, 2, untouched) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioPollRequests(readIds, 2, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Check(sceKernelAioPollRequests(readIds, -1, untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Check(sceKernelAioPollRequests(badIds, 2, untouched) == SCE_KERNEL_ERROR_EINVAL);
+    const std::int32_t zeroId[2] = {readIds[0], 0};
+    Check(sceKernelAioPollRequests(zeroId, 2, untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Check(untouched[0] == 7 && untouched[1] == 7);
     Check(sceKernelAioSubmitReadCommandsMultiple(nullptr, 1, 0, readIds) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioSubmitReadCommandsMultiple(readBatch, 1, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Check(sceKernelAioSubmitWriteCommandsMultiple(writeBatch, 0, 0, writeIds) == SCE_KERNEL_ERROR_EINVAL);
@@ -171,6 +200,11 @@ int main() {
     std::array<std::int32_t, 129> manyIds{};
     std::array<std::int32_t, 129> manyStates{};
     manyIds.fill(readIds[0]);
+    manyStates.fill(77);
+    try { sceKernelAioPollRequests(manyIds.data(), 129, manyStates.data()); } catch (const std::runtime_error&) { threw = true; }
+    Check(threw);
+    for (const auto value : manyStates) Check(value == 77);
+    threw = false;
     try { sceKernelAioDeleteRequests(manyIds.data(), 129, manyStates.data()); } catch (const std::runtime_error&) { threw = true; }
     Check(threw);
     Check(sceKernelAioCancelRequest(9999, &cancelled) == SCE_KERNEL_ERROR_EINVAL);
