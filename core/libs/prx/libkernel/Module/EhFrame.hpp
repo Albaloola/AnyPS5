@@ -76,9 +76,16 @@ std::uint64_t FramesSize(const TContains& contains, std::uintptr_t frames, const
         std::uint32_t length;
         std::memcpy(&length, reinterpret_cast<const void*>(position), sizeof(length));
         if (length == 0) return position - frames;
-        if (length == 0xffffffffu) Fail(caller, "unsupported eh_frame record with a 64-bit length");
-        if (!contains(position + 4, length)) Fail(caller, "eh_frame record outside the image");
-        position += 4 + length;
+        position += sizeof(length);
+        std::uint64_t recordLength = length;
+        if (length == 0xffffffffu) {
+            if (!contains(position, sizeof(recordLength))) Fail(caller, "eh_frame extended length outside the image");
+            std::memcpy(&recordLength, reinterpret_cast<const void*>(position), sizeof(recordLength));
+            position += sizeof(recordLength);
+        }
+        if (recordLength > std::numeric_limits<std::uintptr_t>::max() - position || !contains(position, recordLength))
+            Fail(caller, "eh_frame record outside the image");
+        position += recordLength;
     }
 }
 
