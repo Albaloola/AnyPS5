@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -196,12 +197,47 @@ static void CheckUnspecifiedIpv6() {
     Require(sceNetSocketClose(receiver) == 0);
 }
 
+static void TestResolverRecordLayout() {
+    static_assert(sizeof(GuestResolverRecords) == 384);
+    const int resolver = sceNetResolverCreate("record-layout", 0, 0);
+    Require(resolver >= 0);
+    alignas(GuestResolverRecords) std::array<std::uint8_t, 416> output;
+    output.fill(0xa5);
+    auto* records = reinterpret_cast<GuestResolverRecords*>(output.data() + 16);
+    Require(sceNetResolverStartNtoaMultipleRecords(resolver, "127.0.0.1", records, 5000000, 1, 0) == 0);
+    Require(std::all_of(output.begin(), output.begin() + 16, [](auto byte) { return byte == 0xa5; }));
+    Require(std::all_of(output.begin() + 400, output.end(), [](auto byte) { return byte == 0xa5; }));
+    Require(output[16] == 127 && output[17] == 0 && output[18] == 0 && output[19] == 1);
+    std::uint32_t family = 0, count = 0, ipv4Count = 0;
+    std::memcpy(&family, output.data() + 32, sizeof(family));
+    std::memcpy(&count, output.data() + 336, sizeof(count));
+    std::memcpy(&ipv4Count, output.data() + 340, sizeof(ipv4Count));
+    Require(family == 2 && count == 1 && ipv4Count == 1);
+    Require(std::all_of(output.begin() + 20, output.begin() + 32, [](auto byte) { return byte == 0; }));
+    Require(std::all_of(output.begin() + 36, output.begin() + 336, [](auto byte) { return byte == 0; }));
+    Require(std::all_of(output.begin() + 344, output.begin() + 400, [](auto byte) { return byte == 0; }));
+    const auto unchanged = output;
+    std::array<char, 257> oversized;
+    oversized.fill('a');
+    oversized.back() = 0;
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, oversized.data(), records, 5000000, 1, 0), 22));
+    Require(output == unchanged);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, nullptr, records, 5000000, 1, 0), 22));
+    Require(output == unchanged);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, "", records, 5000000, 1, 0), 22));
+    Require(output == unchanged);
+    Require(sceNetResolverDestroy(resolver) == 0);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecords(resolver, "127.0.0.1", records, 5000000, 1, 0), 9));
+    Require(output == unchanged);
+}
+
 int main() {
     for (int i = 0; i < 16; ++i) {
         Require(in6addr_any_nid_postfix[i] == 0);
         Require(in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
     }
     Require(sceNetInit_nid_postfix() == 0);
+    TestResolverRecordLayout();
     CheckAddressText(2, "127.0.0.1");
     CheckAddressText(2, "255.255.255.255");
     CheckAddressText(28, "::1");
