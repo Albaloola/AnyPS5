@@ -1,0 +1,14 @@
+EXPORTS
+sceVdecswAllocateComputeQueue
+sceVdecswCreateDecoder
+sceVdecswDeleteDecoder
+sceVdecswFinalizeDecodeSequence
+sceVdecswGetAvcPictureInfo
+sceVdecswQueryComputeMemoryInfo
+sceVdecswQueryDecoderMemoryInfo
+sceVdecswReleaseComputeQueue
+sceVdecswResetDecoder
+sceVdecswSetDecodeInput
+sceVdecswSetDecodeOutput
+sceVdecswTrySyncDecodeInput
+sceVdecswTrySyncDecodeOutput
